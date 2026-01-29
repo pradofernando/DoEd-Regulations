@@ -1,3 +1,10 @@
 .env
 .venv
 output/
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+__azurite_db_table__.json
+__blobstorage__/95520ea3-c3ea-4a60-a4a1-574f6a399ef5
+azure_func/doed_regulatory_comments_func/.vscode

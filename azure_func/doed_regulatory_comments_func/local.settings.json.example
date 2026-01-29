@@ -1,0 +1,21 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "REGULATIONS_GOV_API_KEY": "your_regulations_gov_api_key_here",
+    "DOCUMENT_ID": "ED-2025-SCC-0481-0001",
+    "CATEGORIZATION_AGENT_ID": "asst_COd3DzxCx0SUmQfXKwK0tcl5",
+    "GROUPING_AGENT_ID": "asst_mXQoLXXZyOC1eqovZSTxHRKW",
+    "BATCH_SIZE": "5",
+    "MAX_COMMENTS": "",
+    "AZURE_STORAGE_ACCOUNT_NAME": "your_storage_account_name",
+    "AZURE_AI_PROJECT_CONNECTION_STRING": "your_azure_ai_project_connection_string",
+    "AZURE_AI_PROJECT_ENDPOINT": "your_azure_ai_project_endpoint",
+    "AZURE_AI_AGENT_ENDPOINT": "https://your-resource.services.ai.azure.com/api/projects/your-project",
+    "AZURE_AI_AGENT_SUBSCRIPTION_ID": "your-subscription-id-here",
+    "AZURE_AI_AGENT_RESOURCE_GROUP_NAME": "your-resource-group-name",
+    "AZURE_AI_AGENT_PROJECT_NAME": "your-project-name",
+    "AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME": "your-model-deployment-name"
+  }
+}
