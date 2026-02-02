@@ -13,20 +13,76 @@ This Azure Function automates the complete workflow:
 5. **Group Analysis** - Analyzes and groups similar comments with AI Agent
 6. **Store Results** - Saves all outputs to Azure Blob Storage
 
+## Quick Start
+
+```powershell
+# 1. Deploy all Azure infrastructure
+cd azure_func\infra
+.\deploy.ps1 -RegulationsGovApiKey "your-api-key"
+
+# 2. Create AI Agents in Azure AI Foundry portal (https://ai.azure.com)
+#    - Categorization Agent
+#    - Grouping Agent
+
+# 3. Update Function App with agent IDs (output from step 1)
+az functionapp config appsettings set --name <function-name> --resource-group rg-doed-comments --settings CATEGORIZATION_AGENT_ID=<id> GROUPING_AGENT_ID=<id>
+
+# 4. Deploy Function code
+cd ..\doed_regulatory_comments_func
+func azure functionapp publish <function-name>
+```
+
 ## Schedule
 
 - **Trigger**: Timer Trigger (CRON: `0 0 8 * * *`)
 - **Schedule**: Daily at 3AM EST (8AM UTC)
 - **Execution**: Automatic, no manual intervention required
 
+## Infrastructure
+
+All required Azure resources can be deployed using the included Bicep template located in `infra/`.
+
+### Resources Deployed
+
+| Resource | Purpose |
+|----------|---------|
+| **Azure AI Foundry Hub** | Container for AI projects and shared resources |
+| **Azure AI Foundry Project** | Workspace for AI Agents |
+| **Azure OpenAI (GPT-4o)** | Language model for comment analysis |
+| **Azure Functions (Consumption)** | Serverless compute for the pipeline |
+| **Azure Storage Account** | Blob storage for outputs + Functions runtime |
+| **Azure Key Vault** | Secure storage for API keys |
+| **Application Insights** | Monitoring and telemetry |
+| **Log Analytics Workspace** | Centralized logging |
+
+### Infrastructure Files
+
+```
+azure_func/
+├── infra/
+│   ├── main.bicep              # Bicep template (all resources)
+│   ├── main.parameters.json    # Default parameters
+│   └── deploy.ps1              # PowerShell deployment script
+```
+
+See [Deployment to Azure](#deployment-to-azure) for detailed deployment instructions.
+
 ## Prerequisites
 
-### Azure Resources Required
+### For Local Development
 
-1. **Azure Functions** - Python 3.9+ runtime
-2. **Azure Storage Account** - For blob storage output
-3. **Azure OpenAI** - AI Agents for analysis
+1. **Python 3.11+** - Runtime
+2. **Azure CLI** - Authentication (`az login`)
+3. **Azure Functions Core Tools** - Local testing (`func start`)
 4. **Regulations.gov API Key** - Free from https://open.gsa.gov/api/regulationsgov/
+
+### For Azure Deployment
+
+All Azure resources are created by the Bicep template:
+
+1. **Azure Subscription** - With permissions to create resources
+2. **Azure CLI** - For deployment (`az --version`)
+3. **Regulations.gov API Key** - Required parameter for deployment
 
 ### Python Dependencies
 
@@ -141,7 +197,85 @@ To trigger the function manually without waiting for the schedule:
 
 ## Deployment to Azure
 
-### Option 1: VS Code Extension
+### Option 1: Bicep Template (Recommended) 🚀
+
+Deploy all required Azure infrastructure using Infrastructure as Code (IaC).
+
+**What gets deployed:**
+| Resource | Purpose |
+|----------|---------|
+| Azure AI Foundry Hub & Project | AI Agents for comment analysis |
+| Azure OpenAI (GPT-4o) | Language model for categorization |
+| Azure Functions | Serverless compute for processing |
+| Azure Storage Account | Blob storage for outputs |
+| Azure Key Vault | Secure storage for API keys |
+| Application Insights | Monitoring and logging |
+| Log Analytics | Centralized log storage |
+
+**Prerequisites:**
+- Azure CLI installed (`az --version`)
+- Logged in to Azure (`az login`)
+- Bicep CLI installed (`az bicep install`)
+- Regulations.gov API key (free from https://open.gsa.gov/api/regulationsgov/)
+
+**Deploy using PowerShell:**
+
+```powershell
+# Navigate to the infra directory
+cd azure_func\infra
+
+# Run the deployment script
+.\deploy.ps1 -RegulationsGovApiKey "your-api-key-here"
+
+# Optional parameters:
+.\deploy.ps1 `
+  -ResourceGroupName "rg-doed-comments" `
+  -Location "eastus" `
+  -RegulationsGovApiKey "your-api-key" `
+  -DocumentId "ED-2025-SCC-0481-0001" `
+  -BatchSize 5 `
+  -GptCapacity 10
+```
+
+**Or deploy using Azure CLI directly:**
+
+```powershell
+# Login to Azure
+az login
+
+# Create resource group
+az group create --name rg-doed-comments --location eastus
+
+# Deploy Bicep template
+az deployment group create `
+  --resource-group rg-doed-comments `
+  --template-file azure_func/infra/main.bicep `
+  --parameters regulationsGovApiKey="your-api-key"
+```
+
+**Post-deployment steps:**
+
+1. **Create AI Agents** in Azure AI Foundry portal (https://ai.azure.com):
+   - Navigate to your project
+   - Create a "Categorization Agent" for individual comment analysis
+   - Create a "Grouping Agent" for collective analysis
+   - Note both agent IDs
+
+2. **Update Function App with agent IDs:**
+   ```powershell
+   az functionapp config appsettings set `
+     --name <function-app-name> `
+     --resource-group rg-doed-comments `
+     --settings CATEGORIZATION_AGENT_ID=<agent-id> GROUPING_AGENT_ID=<agent-id>
+   ```
+
+3. **Deploy Function code:**
+   ```powershell
+   cd azure_func\doed_regulatory_comments_func
+   func azure functionapp publish <function-app-name>
+   ```
+
+### Option 2: VS Code Extension
 
 1. Install "Azure Functions" extension in VS Code
 2. Sign in to Azure
@@ -149,7 +283,9 @@ To trigger the function manually without waiting for the schedule:
 4. Select or create a Function App
 5. Wait for deployment to complete
 
-### Option 2: Azure CLI
+> **Note:** This option only deploys the Function code. You must create the supporting resources (AI Foundry, OpenAI, Storage) separately or use the Bicep template first.
+
+### Option 3: Azure CLI (Manual)
 
 ```powershell
 # Login to Azure
@@ -168,16 +304,18 @@ az functionapp create `
   --storage-account storegulatorycomments `
   --consumption-plan-location eastus `
   --runtime python `
-  --runtime-version 3.9 `
+  --runtime-version 3.11 `
   --functions-version 4 `
   --os-type Linux
 
 # Deploy the function
-cd c:\src\doed_regulatory_comment_project\azure_func\doed_regulatory_comments_func
+cd azure_func\doed_regulatory_comments_func
 func azure functionapp publish func-regulatory-comments
 ```
 
-### Option 3: GitHub Actions
+> **Note:** This option requires manual setup of Azure OpenAI, AI Foundry, and other resources. Use the Bicep template for a complete deployment.
+
+### Option 4: GitHub Actions
 
 See `.github/workflows/azure-function-deploy.yml` for CI/CD setup.
 
