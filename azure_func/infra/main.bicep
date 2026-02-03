@@ -7,7 +7,7 @@
 //
 // Resources Deployed:
 // 1. Azure AI Foundry Hub & Project (for AI Agents)
-// 2. Azure OpenAI Service (GPT-4o model)
+// 2. Azure OpenAI Service (GPT-5.2 model)
 // 3. Azure Functions (Python runtime)
 // 4. Azure Storage Account (for blob storage output)
 // 5. Application Insights (for monitoring)
@@ -32,6 +32,12 @@
 @maxLength(15)
 param baseName string = 'doed-comments'
 
+// ============================================================================
+// DEFAULT REGION: East US
+// To change the deployment region, modify the default value below.
+// All 9 Azure resources will be deployed to this region.
+// Ensure the region supports Azure OpenAI (see @allowed list for valid options).
+// ============================================================================
 @description('Azure region for all resources. Should support Azure OpenAI.')
 @allowed([
   'eastus'
@@ -45,9 +51,9 @@ param baseName string = 'doed-comments'
   'uksouth'
   'francecentral'
 ])
-param location string = 'eastus'
+param location string = 'eastus'  // <-- CHANGE THIS TO DEPLOY TO A DIFFERENT REGION
 
-@description('GPT-4o model deployment capacity in thousands of tokens per minute.')
+@description('GPT-5.2 model deployment capacity in thousands of tokens per minute.')
 @minValue(1)
 @maxValue(100)
 param gptCapacity int = 10
@@ -216,7 +222,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 
 // ============================================================================
 // AZURE OPENAI SERVICE
-// Provides the GPT-4o model for AI-powered comment analysis
+// Provides the GPT-5.2 model for AI-powered comment analysis
 // ============================================================================
 resource openAi 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
   name: openAiName
@@ -241,11 +247,11 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
   }
 }
 
-// Deploy the GPT-4o model
+// Deploy the GPT-5.2 model
 // This model will be used by the AI Agents for categorization and analysis
-resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-10-01-preview' = {
+resource gpt52Deployment 'Microsoft.CognitiveServices/accounts/deployments@2023-10-01-preview' = {
   parent: openAi
-  name: 'gpt-4o'
+  name: 'gpt-52'
   
   sku: {
     // Standard deployment type
@@ -257,9 +263,9 @@ resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4o'
+      name: 'gpt-5.2'
       // Use the latest stable version
-      version: '2024-08-06'
+      version: '2025-01-01'
     }
     // Use default content filtering policy
     raiPolicyName: 'Microsoft.Default'
@@ -325,7 +331,7 @@ resource aiProject 'Microsoft.MachineLearningServices/workspaces@2024-04-01' = {
 // ============================================================================
 // AZURE OPENAI CONNECTION TO AI HUB
 // Connects the OpenAI service to the AI Foundry Hub
-// This allows AI Agents to use the GPT-4o model
+// This allows AI Agents to use the GPT-5.2 model
 // ============================================================================
 resource openAiConnection 'Microsoft.MachineLearningServices/workspaces/connections@2024-04-01' = {
   parent: aiHub
@@ -476,7 +482,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         }
         {
           name: 'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
-          value: gpt4oDeployment.name
+          value: gpt52Deployment.name
         }
         
         // AI Agent IDs (must be created manually in AI Foundry after deployment)
@@ -590,7 +596,7 @@ output aiProjectEndpoint string = 'https://${location}.api.azureml.ms/agents/v1.
 output openAiEndpoint string = openAi.properties.endpoint
 
 @description('Model deployment name')
-output modelDeploymentName string = gpt4oDeployment.name
+output modelDeploymentName string = gpt52Deployment.name
 
 @description('Application Insights instrumentation key')
 output appInsightsKey string = appInsights.properties.InstrumentationKey

@@ -19,8 +19,13 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$ResourceGroupName = "rg-doed-comments",
     
+    # =========================================================================
+    # DEFAULT REGION: East US
+    # Change this value to deploy to a different Azure region.
+    # Must match a region that supports Azure OpenAI (e.g., eastus, westus2, swedencentral)
+    # =========================================================================
     [Parameter(Mandatory=$false)]
-    [string]$Location = "eastus",
+    [string]$Location = "eastus",  # <-- CHANGE THIS TO DEPLOY TO A DIFFERENT REGION
     
     [Parameter(Mandatory=$true)]
     [string]$RegulationsGovApiKey,
