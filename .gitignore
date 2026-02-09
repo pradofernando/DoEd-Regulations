@@ -1,5 +1,6 @@
 .env
 .venv
+.venv_x64
 output/
 __azurite_db_blob__.json
 __azurite_db_blob_extent__.json

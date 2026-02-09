@@ -3,6 +3,7 @@ import asyncio
 import time
 import json
 from datetime import datetime
+from typing import Optional, Tuple, cast
 from azure.identity.aio import AzureCliCredential
 from semantic_kernel.agents import AzureAIAgent, AzureAIAgentThread
 from semantic_kernel.contents import ChatMessageContent, FunctionCallContent, FunctionResultContent
@@ -32,6 +33,7 @@ def process_csv_rows(csv_file_path, max_rows=None):
         
         # Check if we have Document Type column (from old CSV format)
         # If not, all rows are considered public submissions
+        doc_type_index = -1
         try:
             doc_type_index = header.index('Document Type')
             print(f"Document Type column is at index: {doc_type_index}\n")
@@ -93,7 +95,7 @@ async def handle_streaming_intermediate_steps(message: ChatMessageContent) -> No
             print(f"{item}")
 
 
-async def categorize_with_agent(row_strings, csv_file_path) -> list:
+async def categorize_with_agent(row_strings, csv_file_path) -> Tuple[list, str]:
     """
     Phase 1: Categorize each comment individually.
     Returns a list of categorization results.
@@ -106,7 +108,7 @@ async def categorize_with_agent(row_strings, csv_file_path) -> list:
     ):
         # 1. Retrieve the agent definition based on the agent_name
         agent_definition = await client.agents.get_agent(
-            agent_id="asst_COd3DzxCx0SUmQfXKwK0tcl5",
+            agent_id="asst_PxkO14I1it7q5ucsjsFa78Mt",
         )
 
         # 2. Create a Semantic Kernel agent for the Azure AI agent
@@ -118,7 +120,7 @@ async def categorize_with_agent(row_strings, csv_file_path) -> list:
         # 3. Create a thread for the agent
         # If no thread is provided, a new thread will be
         # created and returned with the initial response
-        thread: AzureAIAgentThread = None
+        thread: Optional[AzureAIAgentThread] = None
 
         try:
             for idx, (row_num, row_string) in enumerate(row_strings, 1):
@@ -138,7 +140,7 @@ async def categorize_with_agent(row_strings, csv_file_path) -> list:
                 ):
                     print(f"{response}", end="", flush=True)
                     full_response += str(response)
-                    thread = response.thread
+                    thread = cast(AzureAIAgentThread, response.thread)
                 
                 # Parse the categorization to remove markdown code blocks
                 categorization_text = full_response.strip()
@@ -233,7 +235,7 @@ async def group_categorizations(categorizations_file: str, batch_size: int = 5) 
         AzureAIAgent.create_client(credential=creds) as client,
     ):
         agent_definition = await client.agents.get_agent(
-            agent_id="asst_mXQoLXXZyOC1eqovZSTxHRKW",
+            agent_id="asst_ZWk5TGqWQEE7WZhsWnzlRBul",
         )
         
         agent = AzureAIAgent(
@@ -241,7 +243,7 @@ async def group_categorizations(categorizations_file: str, batch_size: int = 5) 
             definition=agent_definition,
         )
         
-        thread: AzureAIAgentThread = None
+        thread: Optional[AzureAIAgentThread] = None
         
         try:
             # Process categorizations in batches, maintaining thread context
@@ -287,7 +289,7 @@ async def group_categorizations(categorizations_file: str, batch_size: int = 5) 
                 ):
                     print(f"{response}", end="", flush=True)
                     batch_response += str(response)
-                    thread = response.thread
+                    thread = cast(AzureAIAgentThread, response.thread)
                 
                 # Capture the final analysis from the last batch
                 if is_last_batch:
