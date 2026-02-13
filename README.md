@@ -20,6 +20,71 @@ AI Agent Analysis (Azure OpenAI via APIM)
 Final Report (Categorizations & Collective Analysis)
 ```
 
+## Azure Deployment (Bicep Template)
+
+Yes—the project includes Bicep-based infrastructure deployment for the Azure Function workflow.
+
+The template in this repo is designed to stand up the end-to-end Azure environment used by the scheduled processing function, including identity, secrets, observability, storage, and AI dependencies.
+
+**Bicep files:**
+- `azure_func/infra/main.bicep` - Infrastructure template
+- `azure_func/infra/main.parameters.json` - Parameter defaults
+- `azure_func/infra/deploy.ps1` - PowerShell deployment helper
+
+### What the Bicep template deploys
+
+- Azure Function App (Python on Linux Consumption plan)
+- Storage Account + `regulatory-comments` blob container
+- Key Vault for secret storage (Regulations.gov API key)
+- Application Insights + Log Analytics workspace
+- Azure OpenAI resource + model deployment
+- Azure AI Foundry Hub + Project
+- RBAC role assignments for managed identity access across resources
+
+### Key deployment parameters
+
+- `baseName` - Prefix used for resource naming
+- `location` - Azure region for deployment (default `eastus`)
+- `regulationsGovApiKey` - Required secure parameter stored in Key Vault
+- `documentId` - Regulations.gov document ID to process
+- `batchSize` - Grouping batch size for analysis stage
+- `gptCapacity` - Model capacity setting for the OpenAI deployment
+
+### Quick Deploy
+
+```powershell
+# From repository root
+cd azure_func\infra
+
+# Deploy all required Azure resources
+.\deploy.ps1 -RegulationsGovApiKey "your-api-key"
+```
+
+### Azure CLI Alternative
+
+```powershell
+az group create --name rg-doed-comments --location eastus
+
+az deployment group create `
+  --resource-group rg-doed-comments `
+  --template-file main.bicep `
+  --parameters main.parameters.json `
+  --parameters regulationsGovApiKey="your-api-key"
+```
+
+### Deployment outputs you can reuse
+
+After deployment, the template returns values such as:
+- Function app name and URL
+- Storage account name
+- AI project endpoint and project name
+- OpenAI endpoint and model deployment name
+- Key Vault name, resource group name, and subscription ID
+
+These outputs are used in the post-deployment configuration steps (agent creation and function publish).
+
+For full post-deployment steps (creating AI agents and publishing the function app), see `azure_func/README.md` under **Deployment to Azure**.
+
 ## Prerequisites
 
 ### Required Azure Resources
