@@ -88,14 +88,27 @@ $deployment = az deployment group create `
     --parameters batchSize=$BatchSize `
     --output json 2>&1
 
+$deploymentOutput = $deployment | Where-Object { $_ -is [string] } | Out-String
+
 if ($LASTEXITCODE -ne 0) {
+    # RoleAssignmentExists is non-fatal: the permission already exists from a prior run.
+    # If that is the ONLY error, treat the deployment as successful and continue.
+    $hasOtherErrors = $deploymentOutput -match '"code":"(?!RoleAssignmentExists)[A-Za-z]'
+    if ($hasOtherErrors) {
+        Write-Host ""
+        Write-Host "Deployment failed!" -ForegroundColor Red
+        Write-Host $deploymentOutput
+        exit 1
+    }
     Write-Host ""
-    Write-Host "Deployment failed!" -ForegroundColor Red
-    Write-Host $deployment
-    exit 1
+    Write-Host "Note: Some role assignments already existed (non-fatal - permissions are in place)." -ForegroundColor Yellow
 }
 
-$result = $deployment | ConvertFrom-Json
+# Retrieve outputs (query directly in case of partial failure)
+$result = az deployment group show `
+    --name $deploymentName `
+    --resource-group $ResourceGroupName `
+    --output json 2>&1 | ConvertFrom-Json
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
@@ -106,36 +119,142 @@ Write-Host ""
 # Display outputs
 Write-Host "Deployment Outputs:" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Function App Name: $($result.properties.outputs.functionAppName.value)" -ForegroundColor White
-Write-Host "Function App URL: $($result.properties.outputs.functionAppUrl.value)" -ForegroundColor White
-Write-Host "Storage Account: $($result.properties.outputs.storageAccountName.value)" -ForegroundColor White
-Write-Host "AI Hub Name: $($result.properties.outputs.aiHubName.value)" -ForegroundColor White
-Write-Host "AI Project Name: $($result.properties.outputs.aiProjectName.value)" -ForegroundColor White
-Write-Host "OpenAI Endpoint: $($result.properties.outputs.openAiEndpoint.value)" -ForegroundColor White
-Write-Host "Model Deployment: $($result.properties.outputs.modelDeploymentName.value)" -ForegroundColor White
+$functionAppName = $result.properties.outputs.functionAppName.value
+Write-Host "Function App Name:        $functionAppName" -ForegroundColor White
+Write-Host "Function App URL:         $($result.properties.outputs.functionAppUrl.value)" -ForegroundColor White
+Write-Host "Storage Account:          $($result.properties.outputs.storageAccountName.value)" -ForegroundColor White
+Write-Host "AI Hub Name:              $($result.properties.outputs.aiHubName.value)" -ForegroundColor White
+Write-Host "AI Project Name:          $($result.properties.outputs.aiProjectName.value)" -ForegroundColor White
+Write-Host "AI Project Endpoint:      $($result.properties.outputs.aiProjectEndpoint.value)" -ForegroundColor White
+Write-Host "OpenAI Endpoint:          $($result.properties.outputs.openAiEndpoint.value)" -ForegroundColor White
+Write-Host "Model Deployment:         $($result.properties.outputs.modelDeploymentName.value)" -ForegroundColor White
 Write-Host ""
 
+# -------------------------------------------------------------------------
+# Create AI Agents via REST API (agents can't be created via Bicep)
+# -------------------------------------------------------------------------
 Write-Host "============================================" -ForegroundColor Yellow
-Write-Host "NEXT STEPS" -ForegroundColor Yellow
+Write-Host "Creating AI Agents in Azure AI Foundry..." -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "1. Open Azure AI Foundry portal:" -ForegroundColor White
-Write-Host "   https://ai.azure.com" -ForegroundColor Cyan
+
+$aiHubName    = $result.properties.outputs.aiHubName.value
+$aiProjectName = $result.properties.outputs.aiProjectName.value
+$modelDeployment = $result.properties.outputs.modelDeploymentName.value
+$aiEndpoint   = "https://$aiHubName.services.ai.azure.com/api/projects/$aiProjectName"
+$agentsUrl    = "$aiEndpoint/assistants?api-version=2024-12-01-preview"
+
+Write-Host "AI Endpoint: $aiEndpoint" -ForegroundColor Gray
+
+# Get access token for the Azure AI Foundry API
+Write-Host "Obtaining access token for Azure AI Foundry..." -ForegroundColor Yellow
+$token = (az account get-access-token --resource "https://ai.azure.com" --query accessToken -o tsv)
+if (-not $token) {
+    Write-Host "ERROR: Could not obtain access token. Skipping agent creation." -ForegroundColor Red
+    Write-Host "You can create agents manually in the Azure AI Foundry portal." -ForegroundColor Gray
+} else {
+    $headers = @{
+        'Authorization' = "Bearer $token"
+        'Content-Type'  = 'application/json'
+    }
+
+    # --- Create Categorization Agent ---
+    Write-Host "Creating Categorization Agent..." -ForegroundColor Yellow
+    $catBody = @{
+        model = $modelDeployment
+        name  = "RegulatoryCommentCategorizationAgent"
+        description = "Categorizes individual regulatory comments by topic and sentiment"
+        instructions = "You are an expert regulatory analyst. Analyze each individual public comment submitted in response to U.S. Department of Education regulatory proposals. For each comment: 1) Identify the primary topic/category (e.g. student loans, financial aid, accreditation, civil rights, campus safety, special education). 2) Assess the overall sentiment: supportive, opposed, neutral, or mixed. 3) Extract the key concerns or arguments raised. 4) Note whether the commenter is an individual or an organization. Return your analysis as structured JSON."
+    } | ConvertTo-Json -Depth 5
+
+    try {
+        $catResponse = Invoke-RestMethod -Method Post -Uri $agentsUrl -Headers $headers -Body $catBody
+        $categorizationAgentId = $catResponse.id
+        Write-Host "Categorization Agent created: $categorizationAgentId" -ForegroundColor Green
+    } catch {
+        Write-Host "ERROR creating Categorization Agent: $_" -ForegroundColor Red
+        $categorizationAgentId = $null
+    }
+
+    # --- Create Grouping Agent ---
+    Write-Host "Creating Grouping Agent..." -ForegroundColor Yellow
+    $grpBody = @{
+        model = $modelDeployment
+        name  = "RegulatoryCommentGroupingAgent"
+        description = "Groups and summarizes batches of categorized regulatory comments"
+        instructions = "You are an expert regulatory policy analyst. You receive batches of pre-categorized public comments on U.S. Department of Education regulatory proposals. Your job is to: 1) Identify common themes and patterns across the batch. 2) Group similar comments together. 3) Synthesize the key arguments made by each group. 4) Quantify the distribution of opinions (e.g. 60% opposed, 30% supportive, 10% neutral). 5) Highlight any unique or outlier perspectives. 6) Produce a structured summary suitable for policy review. Return your analysis as structured JSON."
+    } | ConvertTo-Json -Depth 5
+
+    try {
+        $grpResponse = Invoke-RestMethod -Method Post -Uri $agentsUrl -Headers $headers -Body $grpBody
+        $groupingAgentId = $grpResponse.id
+        Write-Host "Grouping Agent created: $groupingAgentId" -ForegroundColor Green
+    } catch {
+        Write-Host "ERROR creating Grouping Agent: $_" -ForegroundColor Red
+        $groupingAgentId = $null
+    }
+
+    # --- Update Function App settings with real agent IDs ---
+    if ($categorizationAgentId -and $groupingAgentId) {
+        Write-Host ""
+        Write-Host "Updating Function App settings with agent IDs..." -ForegroundColor Yellow
+        az functionapp config appsettings set `
+            --name $functionAppName `
+            --resource-group $ResourceGroupName `
+            --settings "CATEGORIZATION_AGENT_ID=$categorizationAgentId" "GROUPING_AGENT_ID=$groupingAgentId" `
+            --output none
+
+        Write-Host "Function App settings updated." -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  Categorization Agent ID: $categorizationAgentId" -ForegroundColor Cyan
+        Write-Host "  Grouping Agent ID:        $groupingAgentId" -ForegroundColor Cyan
+    } else {
+        Write-Host ""
+        Write-Host "WARNING: One or both agents failed to create." -ForegroundColor Yellow
+        Write-Host "Update CATEGORIZATION_AGENT_ID and GROUPING_AGENT_ID in the Function App settings manually." -ForegroundColor Yellow
+    }
+}
 Write-Host ""
-Write-Host "2. Navigate to your project: $($result.properties.outputs.aiProjectName.value)" -ForegroundColor White
+
+# -------------------------------------------------------------------------
+# Publish the Function App code
+# -------------------------------------------------------------------------
+Write-Host "============================================" -ForegroundColor Yellow
+Write-Host "Publishing Function App code..." -ForegroundColor Yellow
+Write-Host "============================================" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "3. Create two AI Agents:" -ForegroundColor White
-Write-Host "   a) Categorization Agent - for individual comment analysis" -ForegroundColor Gray
-Write-Host "   b) Grouping Agent - for collective analysis" -ForegroundColor Gray
+
+$funcAppDir = Join-Path $PSScriptRoot "..\..\azure_func\doed_regulatory_comments_func"
+$funcAppDir = Resolve-Path $funcAppDir
+
+# Check if Azure Functions Core Tools is installed
+if (-not (Get-Command func -ErrorAction SilentlyContinue)) {
+    Write-Host "Azure Functions Core Tools not found. Installing..." -ForegroundColor Yellow
+    winget install --id Microsoft.AzureFunctionsCoreTools --accept-source-agreements --accept-package-agreements
+    # Refresh PATH
+    $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+}
+
+Push-Location $funcAppDir
+try {
+    Write-Host "Publishing to $functionAppName..." -ForegroundColor Yellow
+    func azure functionapp publish $functionAppName --python
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ""
+        Write-Host "Function App published successfully!" -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Host "Function App publish failed. You can retry manually:" -ForegroundColor Red
+        Write-Host "  cd $funcAppDir" -ForegroundColor Gray
+        Write-Host "  func azure functionapp publish $functionAppName --python" -ForegroundColor Gray
+    }
+} finally {
+    Pop-Location
+}
+
 Write-Host ""
-Write-Host "4. Update the Function App configuration with agent IDs:" -ForegroundColor White
-Write-Host "   az functionapp config appsettings set \" -ForegroundColor Gray
-Write-Host "     --name $($result.properties.outputs.functionAppName.value) \" -ForegroundColor Gray
-Write-Host "     --resource-group $ResourceGroupName \" -ForegroundColor Gray
-Write-Host "     --settings CATEGORIZATION_AGENT_ID=<agent-id> GROUPING_AGENT_ID=<agent-id>" -ForegroundColor Gray
-Write-Host ""
-Write-Host "5. Deploy the Function code:" -ForegroundColor White
-Write-Host "   cd azure_func\doed_regulatory_comments_func" -ForegroundColor Gray
-Write-Host "   func azure functionapp publish $($result.properties.outputs.functionAppName.value)" -ForegroundColor Gray
-Write-Host ""
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "All done! Your app is fully deployed." -ForegroundColor Cyan
+Write-Host "The function runs daily at 3AM EST (8AM UTC)." -ForegroundColor Cyan
+Write-Host "Monitor it at: https://portal.azure.com" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan

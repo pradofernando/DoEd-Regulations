@@ -7,12 +7,13 @@
 //
 // Resources Deployed:
 // 1. Azure AI Foundry Hub & Project (for AI Agents)
-// 2. Azure OpenAI Service (GPT-5.2 model)
-// 3. Azure Functions (Python runtime)
+// 2. Azure OpenAI Service (GPT-4o model)
+// 3. Azure Functions (Python runtime, Flex Consumption plan)
 // 4. Azure Storage Account (for blob storage output)
 // 5. Application Insights (for monitoring)
 // 6. Key Vault (for secrets management)
 // 7. Log Analytics Workspace (for logs)
+// 8. Deployment Script (auto-creates AI Agents + wires agent IDs into Function App)
 //
 // Usage:
 //   az deployment group create \
@@ -38,11 +39,10 @@ param baseName string = 'doed-comments'
 // All 9 Azure resources will be deployed to this region.
 // Ensure the region supports Azure OpenAI (see @allowed list for valid options).
 // ============================================================================
-@description('Azure region for all resources. Should support Azure OpenAI.')
+@description('Azure region for all resources. Must support Azure OpenAI and Azure AI Foundry.')
 @allowed([
-  'eastus'
+  'eastus'           // Recommended: broadest Azure OpenAI model availability
   'eastus2'
-  'westus'
   'westus2'
   'westus3'
   'northcentralus'
@@ -50,10 +50,12 @@ param baseName string = 'doed-comments'
   'swedencentral'
   'uksouth'
   'francecentral'
+  'australiaeast'
+  // Note: 'westus' is intentionally excluded - Azure OpenAI is not available there
 ])
 param location string = 'eastus'  // <-- CHANGE THIS TO DEPLOY TO A DIFFERENT REGION
 
-@description('GPT-5.2 model deployment capacity in thousands of tokens per minute.')
+@description('GPT-4o model deployment capacity in thousands of tokens per minute.')
 @minValue(1)
 @maxValue(100)
 param gptCapacity int = 10
@@ -86,10 +88,15 @@ var keyVaultName = take('kv-${baseName}-${uniqueSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
 var openAiName = 'oai-${baseName}-${uniqueSuffix}'
-var aiHubName = 'aihub-${baseName}'
-var aiProjectName = 'aiproj-${baseName}'
+// NOTE: These match the manually created Foundry resources in the portal.
+// Hub resource name: doed-ai-comments | Project name: proj-default
+var aiHubName = 'doed-ai-comments'
+var aiProjectName = 'proj-default'
 var functionAppName = 'func-${baseName}-${uniqueSuffix}'
-var appServicePlanName = 'asp-${baseName}'
+var flexPlanName = 'asp-${baseName}'
+
+// User-assigned managed identity (pre-existing resource, kept for reference)
+var deploymentScriptIdentityName = 'id-deploy-${baseName}'
 
 // ============================================================================
 // STORAGE ACCOUNT
@@ -139,6 +146,15 @@ resource commentsContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   name: 'regulatory-comments'
   properties: {
     // Private access - no anonymous access allowed
+    publicAccess: 'None'
+  }
+}
+
+// Blob container used by Flex Consumption for storing deployment packages
+resource releasesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobServices
+  name: 'function-releases'
+  properties: {
     publicAccess: 'None'
   }
 }
@@ -247,11 +263,11 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
   }
 }
 
-// Deploy the GPT-5.2 model
+// Deploy the GPT-4.1 model
 // This model will be used by the AI Agents for categorization and analysis
-resource gpt52Deployment 'Microsoft.CognitiveServices/accounts/deployments@2023-10-01-preview' = {
+resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-10-01-preview' = {
   parent: openAi
-  name: 'gpt-52'
+  name: 'gpt-4.1'
   
   sku: {
     // Standard deployment type
@@ -263,9 +279,9 @@ resource gpt52Deployment 'Microsoft.CognitiveServices/accounts/deployments@2023-
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-5.2'
-      // Use the latest stable version
-      version: '2025-01-01'
+      name: 'gpt-4.1'
+      // Latest stable version
+      version: '2025-04-14'
     }
     // Use default content filtering policy
     raiPolicyName: 'Microsoft.Default'
@@ -353,74 +369,104 @@ resource openAiConnection 'Microsoft.MachineLearningServices/workspaces/connecti
     // Metadata for the connection
     metadata: {
       ApiVersion: '2023-10-01-preview'
+      ApiType: 'azure'
       ResourceId: openAi.id
     }
   }
 }
 
 // ============================================================================
-// APP SERVICE PLAN (Consumption)
-// Serverless compute for Azure Functions
-// Pay only for execution time
+// APP SERVICE PLAN (Flex Consumption - FC1)
+// Flex Consumption is the modern serverless Functions hosting model (GA 2024).
+// Unlike the original Consumption (Y1) or Elastic Premium plans, FC1 does NOT
+// consume VM quota, making it available on subscriptions where Y1/EP1 are blocked.
+// Billed per-execution like Y1, but with faster cold starts and more config options.
 // ============================================================================
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
-  name: appServicePlanName
+resource flexPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
+  name: flexPlanName
   location: location
-  
-  // Consumption plan (serverless)
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
-  
-  // Linux for Python runtime
-  kind: 'functionapp,linux'
-  
+  kind: 'functionapp'
   properties: {
     reserved: true  // Required for Linux
   }
 }
 
 // ============================================================================
-// AZURE FUNCTION APP
-// The main application that runs the regulatory comments processing
+// AZURE FUNCTION APP (Flex Consumption)
+// The main application that runs the regulatory comments processing.
+// Flex Consumption uses functionAppConfig instead of linuxFxVersion to specify
+// runtime, and stores deployment packages in blob storage via managed identity.
 // ============================================================================
-resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
   kind: 'functionapp,linux'
-  
+
   // Enable system-assigned managed identity for secure access to other resources
   identity: {
     type: 'SystemAssigned'
   }
-  
+
   properties: {
-    serverFarmId: appServicePlan.id
-    
+    serverFarmId: flexPlan.id
+
     // HTTPS only for security
     httpsOnly: true
-    
+
+    // Flex Consumption runtime and deployment configuration
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          // Deployment packages are stored here; accessed via managed identity
+          value: '${storageAccount.properties.primaryEndpoints.blob}function-releases'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: 10
+        instanceMemoryMB: 2048
+      }
+      runtime: {
+        name: 'python'
+        version: '3.11'
+      }
+    }
+
     siteConfig: {
-      // Python 3.11 runtime
-      linuxFxVersion: 'PYTHON|3.11'
-      
+      // Note: linuxFxVersion is not set for Flex Consumption - runtime defined in functionAppConfig above.
+
+      // Allow Azure Portal to invoke/test the function from the portal UI
+      cors: {
+        allowedOrigins: [
+          'https://ms.portal.azure.com'
+          'https://portal.azure.com'
+        ]
+        supportCredentials: false
+      }
+
       // Function app settings
       appSettings: [
-        // Azure Functions runtime configuration
+        // Note: FUNCTIONS_WORKER_RUNTIME and FUNCTIONS_EXTENSION_VERSION are
+        // reserved settings on Flex Consumption - they are set automatically
+        // from functionAppConfig.runtime above and must NOT appear here.
+
+        // Storage connection for Functions runtime - uses managed identity (no keys stored)
+        // Requires Storage Blob Data Owner, Queue Data Contributor, and Table Data Contributor
+        // roles on the storage account (assigned below in ROLE ASSIGNMENTS section)
         {
-          name: 'FUNCTIONS_WORKER_RUNTIME'
-          value: 'python'
+          name: 'AzureWebJobsStorage__accountName'
+          value: storageAccount.name
         }
         {
-          name: 'FUNCTIONS_EXTENSION_VERSION'
-          value: '~4'
-        }
-        
-        // Storage connection for Functions runtime
-        {
-          name: 'AzureWebJobsStorage'
-          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
+          name: 'AzureWebJobsStorage__credential'
+          value: 'managedidentity'
         }
         
         // Application Insights for monitoring
@@ -455,6 +501,12 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
           value: string(batchSize)
         }
         
+        // Optional: maximum number of comments to process per run (empty = no limit)
+        {
+          name: 'MAX_COMMENTS'
+          value: ''
+        }
+        
         // Storage account name for blob output (uses managed identity)
         {
           name: 'AZURE_STORAGE_ACCOUNT_NAME'
@@ -464,9 +516,8 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         // Azure AI Foundry configuration
         {
           name: 'AZURE_AI_AGENT_ENDPOINT'
-          // Note: The actual endpoint URL will need to be updated after deployment
-          // Format: https://<region>.api.azureml.ms/agents/v1.0/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.MachineLearningServices/workspaces/<project>
-          value: 'https://${location}.api.azureml.ms'
+          // Confirmed endpoint from AI Foundry portal -> Project -> Overview -> Endpoint
+          value: 'https://doed-ai-comments.services.ai.azure.com/api/projects/proj-default'
         }
         {
           name: 'AZURE_AI_AGENT_SUBSCRIPTION_ID'
@@ -482,18 +533,18 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
         }
         {
           name: 'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
-          value: gpt52Deployment.name
+          value: gpt4oDeployment.name
         }
         
-        // AI Agent IDs (must be created manually in AI Foundry after deployment)
-        // Update these after creating the agents
+        // AI Agent IDs - automatically populated by the deployment script below.
+        // Set to PENDING here; the script overwrites them with real IDs.
         {
           name: 'CATEGORIZATION_AGENT_ID'
-          value: 'UPDATE_AFTER_CREATING_AGENT'
+          value: 'PENDING_AGENT_CREATION'
         }
         {
           name: 'GROUPING_AGENT_ID'
-          value: 'UPDATE_AFTER_CREATING_AGENT'
+          value: 'PENDING_AGENT_CREATION'
         }
       ]
     }
@@ -524,6 +575,32 @@ resource functionStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01
   properties: {
     // Storage Blob Data Contributor role
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant Function App access to Storage Queues
+// Required by the Functions runtime when using managed identity for AzureWebJobsStorage
+resource functionStorageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, 'Storage Queue Data Contributor')
+  scope: storageAccount
+  properties: {
+    // Storage Queue Data Contributor role
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Grant Function App access to Storage Tables
+// Required by the Functions runtime when using managed identity for AzureWebJobsStorage
+resource functionStorageTableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, 'Storage Table Data Contributor')
+  scope: storageAccount
+  properties: {
+    // Storage Table Data Contributor role
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
     principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
@@ -575,6 +652,29 @@ resource hubOpenAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
+// Grant Function App the Azure AI Developer role on the AI Project
+// Required for the function to call the Azure AI Agents API (AzureAIAgent in Semantic Kernel)
+resource functionAiDeveloperRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aiProject.id, functionApp.id, 'Azure AI Developer')
+  scope: aiProject
+  properties: {
+    // Azure AI Developer role - grants access to AI Agents, deployments, and project resources
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '64702f94-c441-49e6-a78b-ef80e0188fee')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ============================================================================
+// USER-ASSIGNED MANAGED IDENTITY (pre-existing resource)
+// Originally created for deployment scripts. Kept in Bicep to avoid drift.
+// Agent creation now happens locally via deploy.ps1 (az rest calls).
+// ============================================================================
+resource deploymentScriptIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: deploymentScriptIdentityName
+  location: location
+}
+
 // ============================================================================
 // OUTPUTS
 // Values needed for configuration after deployment
@@ -589,14 +689,14 @@ output functionAppUrl string = 'https://${functionApp.properties.defaultHostName
 @description('Storage Account name for blob access')
 output storageAccountName string = storageAccount.name
 
-@description('Azure AI Project endpoint - update AZURE_AI_AGENT_ENDPOINT with this')
-output aiProjectEndpoint string = 'https://${location}.api.azureml.ms/agents/v1.0/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.MachineLearningServices/workspaces/${aiProject.name}'
+@description('Azure AI Project endpoint (already set as AZURE_AI_AGENT_ENDPOINT on the function app)')
+output aiProjectEndpoint string = 'https://${aiHub.name}.services.ai.azure.com/api/projects/${aiProject.name}'
 
 @description('Azure OpenAI endpoint')
 output openAiEndpoint string = openAi.properties.endpoint
 
 @description('Model deployment name')
-output modelDeploymentName string = gpt52Deployment.name
+output modelDeploymentName string = gpt4oDeployment.name
 
 @description('Application Insights instrumentation key')
 output appInsightsKey string = appInsights.properties.InstrumentationKey

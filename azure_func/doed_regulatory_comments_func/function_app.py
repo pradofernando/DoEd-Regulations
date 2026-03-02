@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import time
 import csv
 import io
@@ -301,7 +302,8 @@ async def categorize_with_agent(csv_rows: List[Dict], agent_id: str) -> Tuple[Li
         AzureAIAgent.create_client(credential=creds) as client,
     ):
         agent_definition = await client.agents.get_agent(agent_id=agent_id)
-        agent = AzureAIAgent(client=client, definition=agent_definition)
+        safe_name = re.sub(r'[^0-9A-Za-z_]', '_', agent_definition.name or 'categorization_agent')
+        agent = AzureAIAgent(client=client, definition=agent_definition, name=safe_name)
         thread: AzureAIAgentThread = None
         
         try:
@@ -360,7 +362,8 @@ async def group_categorizations(categorizations: List[Dict], agent_id: str, batc
         AzureAIAgent.create_client(credential=creds) as client,
     ):
         agent_definition = await client.agents.get_agent(agent_id=agent_id)
-        agent = AzureAIAgent(client=client, definition=agent_definition)
+        safe_name = re.sub(r'[^0-9A-Za-z_]', '_', agent_definition.name or 'grouping_agent')
+        agent = AzureAIAgent(client=client, definition=agent_definition, name=safe_name)
         thread: AzureAIAgentThread = None
         
         try:
