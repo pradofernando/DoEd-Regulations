@@ -76,7 +76,9 @@ Write-Host ""
 
 $deploymentName = "doed-comments-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 
-$deployment = az deployment group create `
+# Capture stdout (JSON) and stderr separately to avoid JSON parse corruption
+$stderrFile = [System.IO.Path]::GetTempFileName()
+$deploymentJson = az deployment group create `
     --name $deploymentName `
     --resource-group $ResourceGroupName `
     --template-file "$PSScriptRoot\main.bicep" `
@@ -86,39 +88,48 @@ $deployment = az deployment group create `
     --parameters regulationsGovApiKey=$RegulationsGovApiKey `
     --parameters documentId=$DocumentId `
     --parameters batchSize=$BatchSize `
-    --output json 2>&1
+    --output json 2>$stderrFile
 
-$deploymentOutput = $deployment | Where-Object { $_ -is [string] } | Out-String
+$stderrContent = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+Remove-Item $stderrFile -ErrorAction SilentlyContinue
 
 if ($LASTEXITCODE -ne 0) {
-    # RoleAssignmentExists is non-fatal: the permission already exists from a prior run.
-    # If that is the ONLY error, treat the deployment as successful and continue.
-    $hasOtherErrors = $deploymentOutput -match '"code":"(?!RoleAssignmentExists)[A-Za-z]'
-    if ($hasOtherErrors) {
+    # RoleAssignmentExists is non-fatal — permission already exists from a prior run
+    $isOnlyRoleConflict = ($stderrContent -match 'RoleAssignmentExists') -and
+                          ($stderrContent -notmatch '"code"\s*:\s*"(?!RoleAssignmentExists)[A-Za-z]')
+    if ($isOnlyRoleConflict) {
+        Write-Host ""
+        Write-Host "Note: Some role assignments already existed (non-fatal - permissions are in place)." -ForegroundColor Yellow
+    } else {
         Write-Host ""
         Write-Host "Deployment failed!" -ForegroundColor Red
-        Write-Host $deploymentOutput
+        Write-Host ""
+        # Try to extract a human-readable error message
+        $errorMsg = $stderrContent
+        if ($stderrContent -match '"message"\s*:\s*"([^"]+)"') { $errorMsg = $Matches[1] }
+        Write-Host "Error: $errorMsg" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Common causes:" -ForegroundColor Yellow
+        Write-Host "  - gpt-4.1 model not available in your subscription/region" -ForegroundColor Yellow
+        Write-Host "    Check: az cognitiveservices model list --location $Location --query `"[?model.name=='gpt-4.1']`" -o table" -ForegroundColor Cyan
+        Write-Host "  - Insufficient quota for the chosen capacity ($GptCapacity K TPM)" -ForegroundColor Yellow
+        Write-Host "    Try: .\deploy.ps1 -GptCapacity 1 -RegulationsGovApiKey `"your-key`"" -ForegroundColor Cyan
+        Write-Host "  - Key Vault name conflict (soft-deleted vault with same name exists)" -ForegroundColor Yellow
+        Write-Host "    Check: az keyvault list-deleted --query `"[].name`" -o table" -ForegroundColor Cyan
         exit 1
     }
-    Write-Host ""
-    Write-Host "Note: Some role assignments already existed (non-fatal - permissions are in place)." -ForegroundColor Yellow
 }
 
-# Retrieve outputs - use 2>$null to keep stderr out of the JSON pipeline
-$resultJson = az deployment group show `
-    --name $deploymentName `
-    --resource-group $ResourceGroupName `
-    --output json 2>$null
-
-if ([string]::IsNullOrWhiteSpace($resultJson)) {
-    Write-Host "" 
-    Write-Host "ERROR: Could not retrieve deployment outputs. The deployment may have failed." -ForegroundColor Red
-    Write-Host "Check details with:" -ForegroundColor Yellow
-    Write-Host "  az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query properties.error -o json" -ForegroundColor Cyan
+# Use the deployment JSON already captured above (avoids a second az call that fails on DeploymentNotFound)
+if ([string]::IsNullOrWhiteSpace($deploymentJson)) {
+    Write-Host ""
+    Write-Host "ERROR: Deployment produced no output. This usually means the deployment failed before it could register." -ForegroundColor Red
+    Write-Host "Check what models are available in your region:" -ForegroundColor Yellow
+    Write-Host "  az cognitiveservices model list --location $Location --query `"[?model.name=='gpt-4.1']`" -o table" -ForegroundColor Cyan
     exit 1
 }
 
-$result = $resultJson | ConvertFrom-Json
+$result = $deploymentJson | ConvertFrom-Json
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
