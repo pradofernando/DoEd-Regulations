@@ -88,10 +88,9 @@ var keyVaultName = take('kv-${baseName}-${uniqueSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
 var openAiName = 'oai-${baseName}-${uniqueSuffix}'
-// NOTE: These match the manually created Foundry resources in the portal.
-// Hub resource name: doed-ai-comments | Project name: proj-default
-var aiHubName = 'doed-ai-comments'
-var aiProjectName = 'proj-default'
+// Hub and Project names include a unique suffix to avoid global name conflicts
+var aiHubName = take('hub-${baseName}-${uniqueSuffix}', 32)
+var aiProjectName = take('proj-${baseName}-${uniqueSuffix}', 32)
 var functionAppName = 'func-${baseName}-${uniqueSuffix}'
 var flexPlanName = 'asp-${baseName}'
 
@@ -516,8 +515,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         // Azure AI Foundry configuration
         {
           name: 'AZURE_AI_AGENT_ENDPOINT'
-          // Confirmed endpoint from AI Foundry portal -> Project -> Overview -> Endpoint
-          value: 'https://doed-ai-comments.services.ai.azure.com/api/projects/proj-default'
+          // Dynamically constructed from deployed hub and project resource names
+          value: 'https://${aiHub.name}.services.ai.azure.com/api/projects/${aiProject.name}'
         }
         {
           name: 'AZURE_AI_AGENT_SUBSCRIPTION_ID'
