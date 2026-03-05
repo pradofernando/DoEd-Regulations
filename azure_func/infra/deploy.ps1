@@ -100,14 +100,26 @@ if ($LASTEXITCODE -ne 0) {
         Write-Host ""
         Write-Host "Deployment failed!" -ForegroundColor Red
         Write-Host ""
-        # Try to extract a human-readable error message
-        $errorMsg = $stderrContent
-        if ($stderrContent -match '"message"\s*:\s*"([^"]+)"') { $errorMsg = $Matches[1] }
-        Write-Host "Error: $errorMsg" -ForegroundColor Red
+        # Extract all inner error messages from the nested JSON
+        $allMessages = [System.Collections.Generic.List[string]]::new()
+        $pattern = '"message"\s*:\s*"([^"]{10,})"'
+        $matches2 = [regex]::Matches($stderrContent, $pattern)
+        foreach ($m in $matches2) { 
+            $msg = $m.Groups[1].Value
+            if ($msg -notmatch 'tracking id|inner error|See https') {
+                $allMessages.Add($msg)
+            }
+        }
+        if ($allMessages.Count -gt 0) {
+            Write-Host "Errors:" -ForegroundColor Red
+            $allMessages | Select-Object -Unique | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+        } else {
+            Write-Host "Raw error:" -ForegroundColor Red
+            Write-Host $stderrContent -ForegroundColor Red
+        }
         Write-Host ""
-        Write-Host "Common causes:" -ForegroundColor Yellow
-        Write-Host "  - Key Vault name conflict (soft-deleted vault with same name exists)" -ForegroundColor Yellow
-        Write-Host "    Check: az keyvault list-deleted --query `"[].name`" -o table" -ForegroundColor Cyan
+        Write-Host "Run this to see full inner error details:" -ForegroundColor Yellow
+        Write-Host "  az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query `"properties.error`" -o json" -ForegroundColor Cyan
         exit 1
     }
 }
