@@ -55,10 +55,8 @@ param baseName string = 'doed-comments'
 ])
 param location string = 'eastus'  // <-- CHANGE THIS TO DEPLOY TO A DIFFERENT REGION
 
-@description('GPT-4o model deployment capacity in thousands of tokens per minute.')
-@minValue(1)
-@maxValue(100)
-param gptCapacity int = 10
+// Model deployment is created manually - set this to match your deployment name
+var modelDeploymentName = 'gpt-4.1'
 
 @description('The Regulations.gov API key. Get one free at https://open.gsa.gov/api/regulationsgov/')
 @secure()
@@ -265,30 +263,14 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
   }
 }
 
-// Deploy the GPT-4.1 model
-// This model will be used by the AI Agents for categorization and analysis
-resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2023-10-01-preview' = {
-  parent: openAi
-  name: 'gpt-4.1'
-  
-  sku: {
-    // Standard deployment type
-    name: 'Standard'
-    // Capacity in thousands of tokens per minute
-    capacity: gptCapacity
-  }
-  
-  properties: {
-    model: {
-      format: 'OpenAI'
-      name: 'gpt-4.1'
-      // Latest stable version
-      version: '2025-04-14'
-    }
-    // Use default content filtering policy
-    raiPolicyName: 'Microsoft.Default'
-  }
-}
+// NOTE: Model deployment is created manually after infrastructure is provisioned.
+// Deploy 'gpt-4.1' (version 2025-04-14) via Azure AI Foundry portal or:
+//   az cognitiveservices account deployment create \
+//     --name <openAiResourceName> --resource-group rg-doed-comments \
+//     --deployment-name gpt-4.1 --model-name gpt-4.1 \
+//     --model-version 2025-04-14 --model-format OpenAI \
+//     --sku-capacity 10 --sku-name Standard
+
 
 // ============================================================================
 // AZURE AI FOUNDRY HUB
@@ -535,7 +517,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         }
         {
           name: 'AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME'
-          value: gpt4oDeployment.name
+          value: modelDeploymentName
         }
         
         // AI Agent IDs - automatically populated by the deployment script below.
@@ -710,8 +692,8 @@ output aiProjectEndpoint string = 'https://${location}.api.azureml.ms/agents/v1.
 @description('Azure OpenAI endpoint')
 output openAiEndpoint string = openAi.properties.endpoint
 
-@description('Model deployment name')
-output modelDeploymentName string = gpt4oDeployment.name
+@description('Model deployment name (created manually)')
+output modelDeploymentName string = modelDeploymentName
 
 @description('Application Insights instrumentation key')
 output appInsightsKey string = appInsights.properties.InstrumentationKey

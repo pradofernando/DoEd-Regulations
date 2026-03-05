@@ -34,10 +34,7 @@ param(
     [string]$DocumentId = "ED-2025-SCC-0481-0001",
     
     [Parameter(Mandatory=$false)]
-    [int]$BatchSize = 5,
-    
-    [Parameter(Mandatory=$false)]
-    [int]$GptCapacity = 10
+    [int]$BatchSize = 5
 )
 
 # Check if logged in to Azure
@@ -84,7 +81,6 @@ $deploymentJson = az deployment group create `
     --template-file (Join-Path $PSScriptRoot 'main.bicep') `
     --parameters baseName="doed-comments" `
     --parameters location=$Location `
-    --parameters gptCapacity=$GptCapacity `
     --parameters regulationsGovApiKey=$RegulationsGovApiKey `
     --parameters documentId=$DocumentId `
     --parameters batchSize=$BatchSize `
@@ -110,10 +106,6 @@ if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: $errorMsg" -ForegroundColor Red
         Write-Host ""
         Write-Host "Common causes:" -ForegroundColor Yellow
-        Write-Host "  - gpt-4.1 model not available in your subscription/region" -ForegroundColor Yellow
-        Write-Host "    Check: az cognitiveservices model list --location $Location --query `"[?model.name=='gpt-4.1']`" -o table" -ForegroundColor Cyan
-        Write-Host "  - Insufficient quota for the chosen capacity ($GptCapacity K TPM)" -ForegroundColor Yellow
-        Write-Host "    Try: .\deploy.ps1 -GptCapacity 1 -RegulationsGovApiKey `"your-key`"" -ForegroundColor Cyan
         Write-Host "  - Key Vault name conflict (soft-deleted vault with same name exists)" -ForegroundColor Yellow
         Write-Host "    Check: az keyvault list-deleted --query `"[].name`" -o table" -ForegroundColor Cyan
         exit 1
