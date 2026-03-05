@@ -81,7 +81,7 @@ $stderrFile = [System.IO.Path]::GetTempFileName()
 $deploymentJson = az deployment group create `
     --name $deploymentName `
     --resource-group $ResourceGroupName `
-    --template-file "$PSScriptRoot\main.bicep" `
+    --template-file (Join-Path $PSScriptRoot 'main.bicep') `
     --parameters baseName="doed-comments" `
     --parameters location=$Location `
     --parameters gptCapacity=$GptCapacity `
@@ -291,7 +291,7 @@ Write-Host "Publishing Function App code..." -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Yellow
 Write-Host ""
 
-$funcAppDir = Join-Path $PSScriptRoot "..\..\azure_func\doed_regulatory_comments_func"
+$funcAppDir = Join-Path $PSScriptRoot ".." "doed_regulatory_comments_func"
 $funcAppDir = Resolve-Path $funcAppDir
 
 # Check if Azure Functions Core Tools is installed
