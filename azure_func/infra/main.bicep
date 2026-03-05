@@ -518,8 +518,8 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         // Azure AI Foundry configuration
         {
           name: 'AZURE_AI_AGENT_ENDPOINT'
-          // Dynamically constructed from deployed hub and project resource names
-          value: 'https://${aiHub.name}.services.ai.azure.com/api/projects/${aiProject.name}'
+          // Correct Azure AI Agents API endpoint format
+          value: 'https://${location}.api.azureml.ms/agents/v1.0/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.MachineLearningServices/workspaces/${aiProject.name}'
         }
         {
           name: 'AZURE_AI_AGENT_SUBSCRIPTION_ID'
@@ -705,7 +705,7 @@ output functionAppUrl string = 'https://${functionApp.properties.defaultHostName
 output storageAccountName string = storageAccount.name
 
 @description('Azure AI Project endpoint (already set as AZURE_AI_AGENT_ENDPOINT on the function app)')
-output aiProjectEndpoint string = 'https://${aiHub.name}.services.ai.azure.com/api/projects/${aiProject.name}'
+output aiProjectEndpoint string = 'https://${location}.api.azureml.ms/agents/v1.0/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.MachineLearningServices/workspaces/${aiProject.name}'
 
 @description('Azure OpenAI endpoint')
 output openAiEndpoint string = openAi.properties.endpoint
