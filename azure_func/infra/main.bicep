@@ -82,7 +82,10 @@ var uniqueSuffix = uniqueString(resourceGroup().id)
 // Storage account names must be 3-24 chars, lowercase alphanumeric only
 #disable-next-line BCP334
 var storageAccountName = take(replace('st${baseName}${uniqueSuffix}', '-', ''), 24)
-var keyVaultName = take('kv-${baseName}-${uniqueSuffix}', 24)
+// Key Vault: use a separate hash seed so the name differs from any soft-deleted vault
+// (soft-deleted vaults with purge protection cannot be purged, so we must use a new name)
+var kvSuffix = take(uniqueString(resourceGroup().id, 'kv'), 8)
+var keyVaultName = take('kv-${baseName}-${kvSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
 // Azure OpenAI custom subdomain must be <=24 chars
