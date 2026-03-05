@@ -257,6 +257,10 @@ resource openAi 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' = {
     
     // Disable local authentication to enforce Azure AD
     disableLocalAuth: false
+
+    // Restore soft-deleted resource if it exists with the same name —
+    // prevents 'has been soft-deleted' validation errors on redeployment
+    restore: true
   }
 }
 
