@@ -87,10 +87,13 @@ var storageAccountName = take(replace('st${baseName}${uniqueSuffix}', '-', ''), 
 var keyVaultName = take('kv-${baseName}-${uniqueSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
-var openAiName = 'oai-${baseName}-${uniqueSuffix}'
+// Azure OpenAI custom subdomain must be <=24 chars
+var openAiName = take('oai-${baseName}-${uniqueSuffix}', 24)
+// Use first 8 chars of uniqueSuffix so hub/project names stay well within limits
+var shortSuffix = take(uniqueSuffix, 8)
 // Hub and Project names include a unique suffix to avoid global name conflicts
-var aiHubName = take('hub-${baseName}-${uniqueSuffix}', 32)
-var aiProjectName = take('proj-${baseName}-${uniqueSuffix}', 32)
+var aiHubName = take('hub-${baseName}-${shortSuffix}', 32)
+var aiProjectName = take('proj-${baseName}-${shortSuffix}', 32)
 var functionAppName = 'func-${baseName}-${uniqueSuffix}'
 var flexPlanName = 'asp-${baseName}'
 
