@@ -579,6 +579,19 @@ resource functionStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
+// Grant Function App Storage Blob Data Owner on Storage Account
+// Required by Flex Consumption for deployment package container access
+resource functionStorageOwnerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, 'Storage Blob Data Owner')
+  scope: storageAccount
+  properties: {
+    // Storage Blob Data Owner role
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Grant Function App access to Storage Queues
 // Required by the Functions runtime when using managed identity for AzureWebJobsStorage
 resource functionStorageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
