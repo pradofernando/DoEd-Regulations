@@ -104,11 +104,21 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Note: Some role assignments already existed (non-fatal - permissions are in place)." -ForegroundColor Yellow
 }
 
-# Retrieve outputs (query directly in case of partial failure)
-$result = az deployment group show `
+# Retrieve outputs - use 2>$null to keep stderr out of the JSON pipeline
+$resultJson = az deployment group show `
     --name $deploymentName `
     --resource-group $ResourceGroupName `
-    --output json 2>&1 | ConvertFrom-Json
+    --output json 2>$null
+
+if ([string]::IsNullOrWhiteSpace($resultJson)) {
+    Write-Host "" 
+    Write-Host "ERROR: Could not retrieve deployment outputs. The deployment may have failed." -ForegroundColor Red
+    Write-Host "Check details with:" -ForegroundColor Yellow
+    Write-Host "  az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query properties.error -o json" -ForegroundColor Cyan
+    exit 1
+}
+
+$result = $resultJson | ConvertFrom-Json
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
@@ -116,18 +126,43 @@ Write-Host "Deployment Succeeded!" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 
+# Extract outputs
+$functionAppName   = $result.properties.outputs.functionAppName.value
+$functionAppUrl    = $result.properties.outputs.functionAppUrl.value
+$storageAccountOut = $result.properties.outputs.storageAccountName.value
+$aiHubNameOut      = $result.properties.outputs.aiHubName.value
+$aiProjectNameOut  = $result.properties.outputs.aiProjectName.value
+$aiProjectEndpoint = $result.properties.outputs.aiProjectEndpoint.value
+$openAiEndpoint    = $result.properties.outputs.openAiEndpoint.value
+$modelDeployment   = $result.properties.outputs.modelDeploymentName.value
+
+# Validate critical outputs are not empty
+$missingOutputs = @()
+if ([string]::IsNullOrWhiteSpace($functionAppName))   { $missingOutputs += 'functionAppName' }
+if ([string]::IsNullOrWhiteSpace($aiHubNameOut))       { $missingOutputs += 'aiHubName' }
+if ([string]::IsNullOrWhiteSpace($aiProjectNameOut))   { $missingOutputs += 'aiProjectName' }
+if ([string]::IsNullOrWhiteSpace($aiProjectEndpoint))  { $missingOutputs += 'aiProjectEndpoint' }
+if ([string]::IsNullOrWhiteSpace($modelDeployment))    { $missingOutputs += 'modelDeploymentName' }
+
+if ($missingOutputs.Count -gt 0) {
+    Write-Host "ERROR: Missing deployment outputs: $($missingOutputs -join ', ')" -ForegroundColor Red
+    Write-Host "This usually means one or more resources failed to provision." -ForegroundColor Yellow
+    Write-Host "Check the error with:" -ForegroundColor Yellow
+    Write-Host "  az deployment group show --resource-group $ResourceGroupName --name $deploymentName --query properties.error -o json" -ForegroundColor Cyan
+    exit 1
+}
+
 # Display outputs
 Write-Host "Deployment Outputs:" -ForegroundColor Cyan
 Write-Host ""
-$functionAppName = $result.properties.outputs.functionAppName.value
 Write-Host "Function App Name:        $functionAppName" -ForegroundColor White
-Write-Host "Function App URL:         $($result.properties.outputs.functionAppUrl.value)" -ForegroundColor White
-Write-Host "Storage Account:          $($result.properties.outputs.storageAccountName.value)" -ForegroundColor White
-Write-Host "AI Hub Name:              $($result.properties.outputs.aiHubName.value)" -ForegroundColor White
-Write-Host "AI Project Name:          $($result.properties.outputs.aiProjectName.value)" -ForegroundColor White
-Write-Host "AI Project Endpoint:      $($result.properties.outputs.aiProjectEndpoint.value)" -ForegroundColor White
-Write-Host "OpenAI Endpoint:          $($result.properties.outputs.openAiEndpoint.value)" -ForegroundColor White
-Write-Host "Model Deployment:         $($result.properties.outputs.modelDeploymentName.value)" -ForegroundColor White
+Write-Host "Function App URL:         $functionAppUrl" -ForegroundColor White
+Write-Host "Storage Account:          $storageAccountOut" -ForegroundColor White
+Write-Host "AI Hub Name:              $aiHubNameOut" -ForegroundColor White
+Write-Host "AI Project Name:          $aiProjectNameOut" -ForegroundColor White
+Write-Host "AI Project Endpoint:      $aiProjectEndpoint" -ForegroundColor White
+Write-Host "OpenAI Endpoint:          $openAiEndpoint" -ForegroundColor White
+Write-Host "Model Deployment:         $modelDeployment" -ForegroundColor White
 Write-Host ""
 
 # -------------------------------------------------------------------------
@@ -138,13 +173,14 @@ Write-Host "Creating AI Agents in Azure AI Foundry..." -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Yellow
 Write-Host ""
 
-$aiHubName    = $result.properties.outputs.aiHubName.value
-$aiProjectName = $result.properties.outputs.aiProjectName.value
-$modelDeployment = $result.properties.outputs.modelDeploymentName.value
-$aiEndpoint   = "https://$aiHubName.services.ai.azure.com/api/projects/$aiProjectName"
-$agentsUrl    = "$aiEndpoint/assistants?api-version=2024-12-01-preview"
+$aiEndpoint = $aiProjectEndpoint
+$agentsUrl  = "$aiEndpoint/assistants?api-version=2024-12-01-preview"
 
 Write-Host "AI Endpoint: $aiEndpoint" -ForegroundColor Gray
+
+# Wait for AI Foundry to fully provision before making REST calls
+Write-Host "Waiting 3 minutes for AI Foundry to finish provisioning..." -ForegroundColor Yellow
+Start-Sleep -Seconds 180
 
 # Get access token for the Azure AI Foundry API
 Write-Host "Obtaining access token for Azure AI Foundry..." -ForegroundColor Yellow
@@ -152,7 +188,26 @@ $token = (az account get-access-token --resource "https://ai.azure.com" --query 
 if (-not $token) {
     Write-Host "ERROR: Could not obtain access token. Skipping agent creation." -ForegroundColor Red
     Write-Host "You can create agents manually in the Azure AI Foundry portal." -ForegroundColor Gray
+} elseif ([string]::IsNullOrWhiteSpace($aiEndpoint) -or $aiEndpoint -notmatch '^https://[^.]+\.') {
+    Write-Host "ERROR: AI endpoint is invalid or empty: '$aiEndpoint'" -ForegroundColor Red
+    Write-Host "Skipping agent creation. Set CATEGORIZATION_AGENT_ID and GROUPING_AGENT_ID manually." -ForegroundColor Yellow
 } else {
+    # Verify the endpoint is reachable (AI Foundry may still need a moment)
+    Write-Host "Verifying AI Foundry endpoint is reachable..." -ForegroundColor Yellow
+    try {
+        $headers = @{ 'Authorization' = "Bearer $token"; 'Content-Type' = 'application/json' }
+        Invoke-RestMethod -Method Get -Uri $agentsUrl -Headers $headers -ErrorAction Stop | Out-Null
+        Write-Host "Endpoint reachable." -ForegroundColor Green
+    } catch {
+        Write-Host "Endpoint not yet ready, waiting 2 more minutes..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 120
+        $token = (az account get-access-token --resource "https://ai.azure.com" --query accessToken -o tsv)
+    }
+
+    # Refresh headers with potentially new token
+    $headers = @{ 'Authorization' = "Bearer $token"; 'Content-Type' = 'application/json' }
+    Write-Host "" -ForegroundColor Gray
+    if ($true) {
     $headers = @{
         'Authorization' = "Bearer $token"
         'Content-Type'  = 'application/json'
@@ -213,7 +268,8 @@ if (-not $token) {
         Write-Host "WARNING: One or both agents failed to create." -ForegroundColor Yellow
         Write-Host "Update CATEGORIZATION_AGENT_ID and GROUPING_AGENT_ID in the Function App settings manually." -ForegroundColor Yellow
     }
-}
+  } # end if ($true)
+} # end else (token + endpoint valid)
 Write-Host ""
 
 # -------------------------------------------------------------------------
@@ -233,6 +289,12 @@ if (-not (Get-Command func -ErrorAction SilentlyContinue)) {
     winget install --id Microsoft.AzureFunctionsCoreTools --accept-source-agreements --accept-package-agreements
     # Refresh PATH
     $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH', 'User')
+}
+
+if ([string]::IsNullOrWhiteSpace($functionAppName)) {
+    Write-Host "ERROR: Cannot publish - function app name is empty." -ForegroundColor Red
+    Write-Host "Retrieve it with: az functionapp list --resource-group $ResourceGroupName --query '[0].name' -o tsv" -ForegroundColor Cyan
+    exit 1
 }
 
 Push-Location $funcAppDir
