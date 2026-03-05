@@ -82,9 +82,9 @@ var uniqueSuffix = uniqueString(resourceGroup().id)
 // Storage account names must be 3-24 chars, lowercase alphanumeric only
 #disable-next-line BCP334
 var storageAccountName = take(replace('st${baseName}${uniqueSuffix}', '-', ''), 24)
-// Key Vault: use a separate hash seed so the name differs from any soft-deleted vault
-// (soft-deleted vaults with purge protection cannot be purged, so we must use a new name)
-var kvSuffix = take(uniqueString(resourceGroup().id, 'kv'), 8)
+// Key Vault: use subscription ID + RG ID as seed to produce a name guaranteed to
+// differ from any soft-deleted vault (which used only resourceGroup().id as seed)
+var kvSuffix = take(uniqueString(subscription().subscriptionId, resourceGroup().id), 8)
 var keyVaultName = take('kv-${baseName}-${kvSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
@@ -183,12 +183,9 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     // Use RBAC for access control (more secure than access policies)
     enableRbacAuthorization: true
     
-    // Soft delete protection (required for production)
+    // Soft delete protection
     enableSoftDelete: true
-    softDeleteRetentionInDays: 90  // min 90 days required when purge protection is enabled
-    
-    // Purge protection prevents permanent deletion during soft delete period
-    enablePurgeProtection: true
+    softDeleteRetentionInDays: 7
   }
 }
 
