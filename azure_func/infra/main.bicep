@@ -76,16 +76,13 @@ param batchSize int = 5
 // ============================================================================
 
 // Generate unique suffix to ensure globally unique resource names
-var uniqueSuffix = uniqueString(resourceGroup().id)
+var uniqueSuffix = uniqueString(subscription().subscriptionId, resourceGroup().id)
 
 // Resource names with unique suffixes where required for global uniqueness
 // Storage account names must be 3-24 chars, lowercase alphanumeric only
 #disable-next-line BCP334
 var storageAccountName = take(replace('st${baseName}${uniqueSuffix}', '-', ''), 24)
-// Key Vault: use subscription ID + RG ID as seed to produce a name guaranteed to
-// differ from any soft-deleted vault (which used only resourceGroup().id as seed)
-var kvSuffix = take(uniqueString(subscription().subscriptionId, resourceGroup().id), 8)
-var keyVaultName = take('kv-${baseName}-${kvSuffix}', 24)
+var keyVaultName = take('kv-${baseName}-${uniqueSuffix}', 24)
 var appInsightsName = 'appi-${baseName}'
 var logAnalyticsName = 'law-${baseName}'
 // Azure OpenAI custom subdomain must be <=24 chars
