@@ -17,7 +17,7 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroupName = "rg-doed-comments",
+    [string]$ResourceGroupName = "rg-doed-comments2",
     
     # =========================================================================
     # DEFAULT REGION: East US
@@ -79,7 +79,7 @@ $deploymentJson = az deployment group create `
     --name $deploymentName `
     --resource-group $ResourceGroupName `
     --template-file (Join-Path $PSScriptRoot 'main.bicep') `
-    --parameters baseName="doed-comments" `
+    --parameters baseName="doed-comments2" `
     --parameters location=$Location `
     --parameters regulationsGovApiKey=$RegulationsGovApiKey `
     --parameters documentId=$DocumentId `
@@ -147,11 +147,11 @@ Write-Host ""
 $functionAppName   = $result.properties.outputs.functionAppName.value
 $functionAppUrl    = $result.properties.outputs.functionAppUrl.value
 $storageAccountOut = $result.properties.outputs.storageAccountName.value
-$aiHubNameOut      = $result.properties.outputs.aiHubName.value
-$aiProjectNameOut  = $result.properties.outputs.aiProjectName.value
+$aiHubNameOut      = "foundry-doed-comments2"
+$aiProjectNameOut  = "proj-doed-comments2"
 $aiProjectEndpoint = $result.properties.outputs.aiProjectEndpoint.value
 $openAiEndpoint    = $result.properties.outputs.openAiEndpoint.value
-$modelDeployment   = $result.properties.outputs.modelDeploymentName.value
+$modelDeployment   = "gpt-4.1"
 
 # Validate critical outputs are not empty
 $missingOutputs = @()

@@ -31,7 +31,7 @@
 @description('Base name for all resources. Resources will be named with this prefix.')
 @minLength(3)
 @maxLength(15)
-param baseName string = 'doed-comments'
+param baseName string = 'doed-comments2'
 
 // ============================================================================
 // DEFAULT REGION: East US
@@ -502,7 +502,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'AZURE_AI_AGENT_ENDPOINT'
           // Correct Azure AI Agents API endpoint format
-          value: 'https://${location}.api.azureml.ms/agents/v1.0/subscriptions/${subscription().subscriptionId}/resourceGroups/${resourceGroup().name}/providers/Microsoft.MachineLearningServices/workspaces/${aiProject.name}'
+          value: 'https://foundry-doed-comments.cognitiveservices.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview'
         }
         {
           name: 'AZURE_AI_AGENT_SUBSCRIPTION_ID'
