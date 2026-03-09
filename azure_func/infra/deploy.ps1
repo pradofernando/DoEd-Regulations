@@ -94,7 +94,7 @@ if ($LASTEXITCODE -ne 0) {
     # Check both stderr AND the deployment JSON output (error can appear in either)
     $combinedOutput = "$stderrContent $deploymentJson"
     $isOnlyRoleConflict = ($combinedOutput -match 'RoleAssignmentExists') -and
-                          ($combinedOutput -notmatch '"code"\s*:\s*"(?!RoleAssignmentExists)[A-Za-z][A-Za-z]')
+                          ($combinedOutput -notmatch '"code"\s*:\s*"(?!RoleAssignmentExists)(?!DeploymentFailed)[A-Za-z][A-Za-z]')
     if ($isOnlyRoleConflict) {
         Write-Host ""
         Write-Host "Note: Some role assignments already existed (non-fatal - permissions are in place)." -ForegroundColor Yellow
